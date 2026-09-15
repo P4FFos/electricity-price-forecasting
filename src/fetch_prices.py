@@ -107,8 +107,13 @@ def fetch_one(session, day, zone, delay):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--start", default=EARLIEST.isoformat(), help="YYYY-MM-DD")
-    parser.add_argument("--end", default=date.today().isoformat(), help="YYYY-MM-DD")
+    parser.add_argument(
+        "--end",
+        default=(date.today() + timedelta(days=1)).isoformat(),
+        help="YYYY-MM-DD (defaults to tomorrow; day-ahead prices publish ~13:00)",
+    )
     parser.add_argument("--zones", nargs="+", default=ZONES, choices=ZONES)
+    parser.add_argument("--recent", type=int, help="fetch only the last N days")
     parser.add_argument("--delay", type=float, default=0.25)
     args = parser.parse_args()
 
@@ -127,6 +132,9 @@ def main():
     if end < EARLIEST:
         log.error("Entire range is before %s; nothing to fetch.", EARLIEST)
         return 1
+
+    if args.recent:
+        start = end - timedelta(days=args.recent)
 
     counts = {"ok": 0, "skipped": 0, "missing": 0, "error": 0}
     missing = []

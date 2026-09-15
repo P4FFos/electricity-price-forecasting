@@ -12,6 +12,7 @@ import pandas as pd
 
 RAW_DIR = Path("data/raw/prices")
 OUT_PATH = Path("data/processed/prices.parquet")
+INTERVALS_COL = "intervals_in_day"
 
 
 def load_all():
@@ -29,7 +30,7 @@ def load_all():
             day_records = json.loads(path.read_text(encoding="utf-8"))
             for record in day_records:
                 record["zone"] = zone_dir.name
-                record["intervals_in_day"] = len(day_records)
+                record[INTERVALS_COL] = len(day_records)
             records.extend(day_records)
     return pd.DataFrame.from_records(records)
 
@@ -48,10 +49,10 @@ def clean(df):
     for col in ("time_start", "time_end"):
         df[col] = pd.to_datetime(df[col], utc=True).dt.tz_convert("Europe/Stockholm")
 
-    df["resolution"] = df["intervals_in_day"].map(
-        lambda n: "quarter" if n > 48 else "hourly"
+    df["resolution"] = df[INTERVALS_COL].map(
+        lambda n: "quarter" if n > 48 else "hourly" 
     )
-    df = df.drop(columns=["intervals_in_day"])
+    df = df.drop(columns=[INTERVALS_COL])
     return df.sort_values(["zone", "time_start"]).reset_index(drop=True)
 
 
