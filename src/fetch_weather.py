@@ -2,7 +2,12 @@
 Fetch temperature and wind history from SMHI for one station per bidding zone.
 
 API: https://opendata-download-metobs.smhi.se/api/version/1.0
-     /parameter/{param}/station/{station}/period/corrected-archive/data.csv
+     /parameter/{param}/station/{station}/period/{period}/data.csv
+
+Two periods are fetched per station and parameter:
+  corrected-archive  full quality-checked history, but excludes the last ~3 months
+  latest-months      the recent months the archive leaves out, not fully checked
+
 
 Data provided by SMHI (https://www.smhi.se).
 """
@@ -14,8 +19,10 @@ import requests
 
 BASE_URL = (
     "https://opendata-download-metobs.smhi.se/api/version/1.0"
-    "/parameter/{param}/station/{station}/period/corrected-archive/data.csv"
+    "/parameter/{param}/station/{station}/period/{period}/data.csv"
 )
+
+PERIODS = ["corrected-archive", "latest-months"]
 
 STATIONS = {
     "SE1": 162860,  # Lulea-Kallax Flygplats
@@ -32,39 +39,43 @@ PARAMETERS = {
 RAW_DIR = Path("data/raw/weather")
 
 
-def fetch_one(zone, station, name, param):
-    """Fetch one parameter for one station. Skips if already downloaded"""
-    path = RAW_DIR / f"{zone}_{name}.csv"
+def fetch_one(zone, station, name, param, period):
+    """Fetch one parameter for one station and period. Skips if already downloaded."""
+    path = RAW_DIR / f"{zone}_{name}_{period}.csv"
+    label = f"{zone} {name} {period}"
 
     if path.exists():
-        print(f"{zone} {name}  skipped")
+        print(f"{label}  skipped")
         return
 
-    url = BASE_URL.format(param=param, station=station)
+    url = BASE_URL.format(param=param, station=station, period=period)
 
     try:
         response = requests.get(url, timeout=60)
     except requests.RequestException as exc:
-        print(f"{zone} {name}  request failed: {exc}")
+        print(f"{label}  request failed: {exc}")
         return
 
     if response.status_code != 200:
-        print(f"{zone} {name}  HTTP {response.status_code}")
+        print(f"{label}  HTTP {response.status_code}")
         return
 
-    if not response.text.startswith("Stationsnamn"):
-        print(f"{zone} {name}  unexpected file format")
+    text = response.content.decode("utf-8-sig")
+
+    if not text.startswith("Stationsnamn"):
+        print(f"{label}  unexpected file format")
         return
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(response.text, encoding="utf-8")
-    print(f"{zone} {name}  ok  ({len(response.text):,} bytes)")
+    path.write_text(text, encoding="utf-8")
+    print(f"{label}  ok  ({len(text):,} bytes)")
 
 
 def main():
     for zone, station in STATIONS.items():
         for name, param in PARAMETERS.items():
-            fetch_one(zone, station, name, param)
+            for period in PERIODS:
+                fetch_one(zone, station, name, param, period)
     return 0
 
 

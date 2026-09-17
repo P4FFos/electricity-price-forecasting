@@ -15,6 +15,9 @@ import pandas as pd
 RAW_DIR = Path("data/raw/weather")
 OUT_PATH = Path("data/processed/weather.parquet")
 ZONES = ["SE1", "SE2", "SE3", "SE4"]
+
+PERIODS = ["corrected-archive", "latest-months"]
+
 START = "2022-11-01"
 
 
@@ -47,10 +50,25 @@ def read_one(path, value_column):
     return df[df["timestamp"] >= START]
 
 
+def read_parameter(zone, name, value_column):
+    """Read both periods for one parameter and combine them"""
+    frames = [
+        read_one(RAW_DIR / f"{zone}_{name}_{period}.csv", value_column)
+        for period in PERIODS
+    ]
+    df = pd.concat(frames, ignore_index=True)
+
+    # The periods overlap by a few weeks. keep="first" keeps the
+    # corrected-archive value, which is quality-checked
+    df = df.drop_duplicates(subset="timestamp", keep="first")
+
+    return df.sort_values("timestamp").reset_index(drop=True)
+
+
 def load_zone(zone):
-    """Load and merge temperature and wind for one zone"""
-    temp = read_one(RAW_DIR / f"{zone}_temperature.csv", "temperature")
-    wind = read_one(RAW_DIR / f"{zone}_wind_speed.csv", "wind_speed")
+    """Load and merge temperature and wind for one zone."""
+    temp = read_parameter(zone, "temperature", "temperature")
+    wind = read_parameter(zone, "wind_speed", "wind_speed")
 
     merged = temp.merge(wind, on="timestamp", how="outer", suffixes=("_temp", "_wind"))
     merged["zone"] = zone
