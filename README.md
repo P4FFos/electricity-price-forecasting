@@ -66,6 +66,9 @@ data is parsed as UTC first, then converted, so daylight saving works correctly.
 Sweden has one 23-hour day and one 25-hour day each year, so nothing here assumes
 a day has 24 hours.
 
+**Baselines were measured before any model was trained** and are committed in
+`results/baselines.csv`. They are not regenerated after the fact.
+
 ---
 
 ## The hourly to quarter-hourly switch
@@ -120,3 +123,30 @@ The `data/` folder is not in git. Everything in it rebuilds from the commands
 above.
 
 ---
+
+## Results
+
+### Baselines
+
+Measured on the validation set (20,372 rows, July 2025 to February 2026) before
+any model was trained.
+
+| Baseline | MAE | RMSE |
+|---|---|---|
+| Seasonal naive (same hour, 7 days earlier) | 0.0316 | 0.0476 |
+| Persistence (same hour, 2 days earlier) | 0.0317 | 0.0472 |
+| Climatology (zone x hour x month mean) | 0.0396 | 0.0529 |
+
+Per zone, taking the better of the two naive methods:
+
+| Zone | Best baseline MAE | Which |
+|---|---|---|
+| SE1 | 0.0265 | persistence |
+| SE2 | 0.0264 | persistence |
+| SE3 | 0.0328 | seasonal naive |
+| SE4 | 0.0362 | seasonal naive |
+
+Persistence wins in the north, seasonal naive in the south. The northern zones
+are more autocorrelated, so two days ago predicts better than a week ago. The
+southern zones have stronger weekly structure. MAE and RMSE only, no MAPE: the data contains 8,195 negative prices and the
+median is near 0.02, so percentage error is meaningless here. Climatology is worst everywhere because it ignores recent conditions entirely.
