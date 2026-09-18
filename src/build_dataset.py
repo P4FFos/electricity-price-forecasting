@@ -23,6 +23,9 @@ ROLLING_DAYS = [7, 30]
 
 QUARTER_ERA_START = "2025-10-01"
 
+TRAIN_FRAC = 0.70
+VAL_FRAC = 0.85
+
 
 def load_hourly_prices():
     """Load prices and average the quarter-hourly ones into hourly values"""
@@ -103,6 +106,18 @@ def report(df):
     print(df[df["temperature"].isna()].groupby("zone").size())
 
 
+def split_by_time(df):
+    """ "Split chronologically"""
+    cut1 = df["timestamp"].quantile(TRAIN_FRAC)
+    cut2 = df["timestamp"].quantile(VAL_FRAC)
+
+    train = df[df["timestamp"] <= cut1]
+    val = df[(df["timestamp"] > cut1) & (df["timestamp"] <= cut2)]
+    test = df[df["timestamp"] > cut2]
+
+    return train, val, test
+
+
 def main():
     df = load_hourly_prices()
     df = join_weather(df)
@@ -118,6 +133,14 @@ def main():
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(OUT_PATH, index=False)
     print(f"\nWritten to {OUT_PATH}")
+
+    train, val, test = split_by_time(df)
+    for name, part in [("train", train), ("val", val), ("test", test)]:
+        print(
+            f"{name:6} {len(part):>7,} rows  "
+            f"{part['timestamp'].min()} -> {part['timestamp'].max()}"
+        )
+        part.to_parquet(OUT_PATH.parent / f"{name}.parquet", index=False)
     return 0
 
 
