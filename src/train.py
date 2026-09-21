@@ -106,6 +106,8 @@ def main():
     pred = model.predict(X_val, num_iteration=model.best_iteration)
 
     report(model, val, pred)
+    
+    val.assign(pred=pred).to_parquet(DATA_DIR / "val_predictions.parquet", index=False)
 
     model_path = Path("models/lgbm.txt")
     model_path.parent.mkdir(parents=True, exist_ok=True)
