@@ -11,7 +11,9 @@ import numpy as np
 import pandas as pd
 
 DATA_DIR = Path("data/processed")
+MODEL_DIR = Path("models")
 SEED = 42
+QUANTILES = [0.1, 0.5, 0.9]
 
 BASELINE_MAE = 0.031558  # seasonal naive, from results/baselines.csv
 
@@ -48,28 +50,28 @@ def score(actual, predicted):
     }
 
 
-def train_model(X_train, y_train, X_val, y_val):
+def train_model(X_train, y_train, X_val, y_val, objective="regression", alpha=None):
     params = {
-        "objective": "regression",
-        "metric": "mae",
+        "objective": objective,
+        "metric": "mae" if objective == "regression" else "quantile",
         "learning_rate": 0.05,
         "num_leaves": 31,
         "verbose": -1,
         "seed": SEED,
     }
+    if alpha is not None:
+        params["alpha"] = alpha
 
     train_set = lgb.Dataset(X_train, y_train, categorical_feature=CATEGORICAL)
     val_set = lgb.Dataset(X_val, y_val, categorical_feature=CATEGORICAL)
 
-    model = lgb.train(
+    return lgb.train(
         params,
         train_set,
         num_boost_round=2000,
         valid_sets=[val_set],
-        callbacks=[lgb.early_stopping(100, verbose=False), lgb.log_evaluation(200)],
+        callbacks=[lgb.early_stopping(100, verbose=False)],
     )
-
-    return model
 
 
 def report(model, val, pred):
@@ -102,19 +104,35 @@ def main():
     X_train, y_train = prepare(train)
     X_val, y_val = prepare(val)
 
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Point forecast
     model = train_model(X_train, y_train, X_val, y_val)
     pred = model.predict(X_val, num_iteration=model.best_iteration)
-
     report(model, val, pred)
-    
-    val.assign(pred=pred).to_parquet(DATA_DIR / "val_predictions.parquet", index=False)
+    model.save_model(str(MODEL_DIR / "lgbm.txt"), num_iteration=model.best_iteration)
 
-    model_path = Path("models/lgbm.txt")
-    model_path.parent.mkdir(parents=True, exist_ok=True)
-    model.save_model(str(model_path), num_iteration=model.best_iteration)
-    print(f"\nsaved to {model_path}")
-    
-    val.assign(pred=pred).to_parquet("data/processed/val_predictions.parquet", index=False)
+    quantile_preds = {}
+    for alpha in QUANTILES:
+        q_model = train_model(
+            X_train, y_train, X_val, y_val, objective="quantile", alpha=alpha
+        )
+        quantile_preds[alpha] = q_model.predict(
+            X_val, num_iteration=q_model.best_iteration
+        )
+        q_model.save_model(
+            str(MODEL_DIR / f"lgbm_q{int(alpha * 100)}.txt"),
+            num_iteration=q_model.best_iteration,
+        )
+
+    val.assign(
+        pred=pred,
+        pred_low=quantile_preds[0.1],
+        pred_high=quantile_preds[0.9],
+    ).to_parquet(DATA_DIR / "val_predictions.parquet", index=False)
+
+    print(f"\nmodels saved to {MODEL_DIR}/")
+    print(f"predictions saved to {DATA_DIR / 'val_predictions.parquet'}")
     return 0
 
 
