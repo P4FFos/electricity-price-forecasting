@@ -50,7 +50,15 @@ def score(actual, predicted):
     }
 
 
-def train_model(X_train, y_train, X_val, y_val, objective="regression", alpha=None):
+def train_model(
+    X_train,
+    y_train,
+    X_val,
+    y_val,
+    objective="regression",
+    alpha=None,
+    categorical=CATEGORICAL,
+):
     params = {
         "objective": objective,
         "metric": "mae" if objective == "regression" else "quantile",
@@ -62,8 +70,8 @@ def train_model(X_train, y_train, X_val, y_val, objective="regression", alpha=No
     if alpha is not None:
         params["alpha"] = alpha
 
-    train_set = lgb.Dataset(X_train, y_train, categorical_feature=CATEGORICAL)
-    val_set = lgb.Dataset(X_val, y_val, categorical_feature=CATEGORICAL)
+    train_set = lgb.Dataset(X_train, y_train, categorical_feature=categorical)
+    val_set = lgb.Dataset(X_val, y_val, categorical_feature=categorical)
 
     return lgb.train(
         params,
