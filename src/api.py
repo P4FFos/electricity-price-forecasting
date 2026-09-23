@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import lightgbm as lgb
@@ -20,7 +20,6 @@ dataset = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load models and data once at startup, not per request."""
     global dataset
 
     models["median"] = lgb.Booster(model_file=str(MODEL_DIR / "lgbm.txt"))
@@ -37,7 +36,6 @@ app = FastAPI(title="Swedish electricity price forecast", lifespan=lifespan)
 
 
 def features_for(zone, timestamp):
-    """Find the feature row for one zone and hour."""
     row = dataset[(dataset["zone"] == zone) & (dataset["timestamp"] == timestamp)]
     if row.empty:
         raise HTTPException(404, f"no data for {zone} at {timestamp}")
@@ -49,7 +47,6 @@ def features_for(zone, timestamp):
 
 
 def log_prediction(zone, target_time, low, median, high):
-    """Store the forecast. Duplicates from a re-run are ignored."""
     stmt = (
         insert(Prediction)
         .values(
@@ -66,6 +63,25 @@ def log_prediction(zone, target_time, low, median, high):
     with Session() as session:
         session.execute(stmt)
         session.commit()
+
+
+def fill_actuals():
+    with Session() as session:
+        pending = session.query(Prediction).filter(Prediction.actual.is_(None)).all()
+
+        filled = 0
+        for row in pending:
+            target = pd.Timestamp(row.target_time).tz_convert("Europe/Stockholm")
+            match = dataset[
+                (dataset["zone"] == row.zone) & (dataset["timestamp"] == target)
+            ]
+            if not match.empty:
+                row.actual = float(match["price"].iloc[0])
+                filled += 1
+
+        session.commit()
+
+    return filled
 
 
 @app.get("/health")
@@ -93,4 +109,76 @@ def predict(zone: str, timestamp: datetime):
         "low": low,
         "median": median,
         "high": high,
+    }
+
+
+@app.post("/admin/fill-actuals")
+def admin_fill_actuals():
+    return {"filled": fill_actuals()}
+
+
+@app.get("/history")
+def history(zone: str, days: int = 14):
+    if zone not in ZONES:
+        raise HTTPException(400, f"zone must be one of {ZONES}")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    with Session() as session:
+        rows = (
+            session.query(Prediction)
+            .filter(Prediction.zone == zone, Prediction.target_time >= cutoff)
+            .order_by(Prediction.target_time, Prediction.issued_at.desc())
+            .all()
+        )
+
+    seen = set()
+    points = []
+    for r in rows:
+        if r.target_time in seen:
+            continue
+        seen.add(r.target_time)
+        points.append(
+            {
+                "target_time": r.target_time.isoformat(),
+                "low": r.pred_low,
+                "median": r.pred_median,
+                "high": r.pred_high,
+                "actual": r.actual,
+            }
+        )
+
+    return {"zone": zone, "points": points}
+
+
+@app.get("/metrics")
+def metrics(zone: str = None, days: int = 30):
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    with Session() as session:
+        q = session.query(Prediction).filter(
+            Prediction.actual.isnot(None), Prediction.target_time >= cutoff
+        )
+        if zone:
+            q = q.filter(Prediction.zone == zone)
+        rows = q.all()
+
+    if not rows:
+        return {
+            "zone": zone or "all",
+            "days": days,
+            "n": 0,
+            "mae": None,
+            "coverage": None,
+        }
+
+    errors = [abs(r.pred_median - r.actual) for r in rows]
+    inside = [r.pred_low <= r.actual <= r.pred_high for r in rows]
+
+    return {
+        "zone": zone or "all",
+        "days": days,
+        "n": len(rows),
+        "mae": sum(errors) / len(errors),
+        "coverage": sum(inside) / len(inside),
     }
