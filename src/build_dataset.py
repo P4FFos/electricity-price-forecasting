@@ -1,15 +1,8 @@
-"""
-Build the modelling dataset by joining prices to weather and adding features
-
-Input:  data/processed/prices.parquet
-        data/processed/weather.parquet
-Output: data/processed/dataset.parquet
-"""
-
 import sys
 from pathlib import Path
 
 import pandas as pd
+import numpy as np
 
 PRICES_PATH = Path("data/processed/prices.parquet")
 WEATHER_PATH = Path("data/processed/weather.parquet")
@@ -26,9 +19,10 @@ QUARTER_ERA_START = "2025-10-01"
 TRAIN_FRAC = 0.70
 VAL_FRAC = 0.85
 
+FORECAST_DAYS = 7
+
 
 def load_hourly_prices():
-    """Load prices and average the quarter-hourly ones into hourly values"""
     prices = pd.read_parquet(PRICES_PATH)
 
     return (
@@ -42,9 +36,6 @@ def load_hourly_prices():
 
 
 def join_weather(prices_h):
-    """Attach temperature and wind to each price hour A left join so every price hour survives
-    Missing weather becomes null, which gradient boosting handles natively
-    """
     weather = pd.read_parquet(WEATHER_PATH)
 
     return prices_h.merge(
@@ -55,7 +46,6 @@ def join_weather(prices_h):
 
 
 def add_calendar_features(df):
-    """Calendar features are safe: a calendar is known in advance"""
     df["hour"] = df["timestamp"].dt.hour
     df["dayofweek"] = df["timestamp"].dt.dayofweek
     df["month"] = df["timestamp"].dt.month
@@ -65,7 +55,6 @@ def add_calendar_features(df):
 
 
 def add_price_history_features(df):
-    """Past prices, all stepped back to the forecast issue time"""
     for days in LAG_DAYS:
         df[f"price_lag_{days}d"] = df.groupby("zone")["price"].shift(24 * days)
 
@@ -82,7 +71,6 @@ def add_price_history_features(df):
 
 
 def check_hourly_grid(df):
-    """Fail if the hourly grid has gaps"""
     gaps = df.groupby("zone")["timestamp"].diff().dropna()
     bad = gaps[gaps != pd.Timedelta("1h")]
 
@@ -94,7 +82,6 @@ def check_hourly_grid(df):
 
 
 def report(df):
-    """Print the coverage report"""
     print(f"\nRows: {len(df):,}")
     print(f"Range: {df['timestamp'].min()}  ->  {df['timestamp'].max()}")
     print(f"Columns: {len(df.columns)}")
@@ -107,7 +94,6 @@ def report(df):
 
 
 def split_by_time(df):
-    """ "Split chronologically"""
     cut1 = df["timestamp"].quantile(TRAIN_FRAC)
     cut2 = df["timestamp"].quantile(VAL_FRAC)
 
@@ -118,12 +104,46 @@ def split_by_time(df):
     return train, val, test
 
 
+def add_future_rows(df):
+    last = df["timestamp"].max()
+
+    future = pd.DataFrame(
+        [
+            {"zone": zone, "timestamp": ts, "price": np.nan}
+            for zone in df["zone"].unique()
+            for ts in pd.date_range(
+                last + pd.Timedelta(hours=1),
+                last + pd.Timedelta(days=FORECAST_DAYS),
+                freq="h",
+                tz="Europe/Stockholm",
+            )
+        ]
+    )
+
+    return pd.concat([df, future], ignore_index=True)
+
+
+def check_no_past_gaps(df):
+    last_known = df.loc[df["price"].notna(), "timestamp"].max()
+    holes = df[(df["timestamp"] < last_known) & (df["price"].isna())]
+
+    if not holes.empty:
+        raise ValueError(
+            f"{len(holes)} hours before {last_known} have no price. "
+            f"First: {holes['timestamp'].min()}. Fetch a wider window."
+        )
+
+
 def main():
     df = load_hourly_prices()
     df = join_weather(df)
 
     df = df.sort_values(["zone", "timestamp"]).reset_index(drop=True)
     check_hourly_grid(df)
+
+    check_no_past_gaps(df)
+    df = add_future_rows(df)
+    df = df.sort_values(["zone", "timestamp"]).reset_index(drop=True)
 
     df = add_calendar_features(df)
     df = add_price_history_features(df)
@@ -134,13 +154,23 @@ def main():
     df.to_parquet(OUT_PATH, index=False)
     print(f"\nWritten to {OUT_PATH}")
 
-    train, val, test = split_by_time(df)
+    future = df[df["price"].isna()]
+    print(f"\nfuture rows: {len(future)}")
+    print(
+        future[
+            ["zone", "timestamp", "price_lag_2d", "price_lag_7d", "price_mean_7d"]
+        ].head()
+    )
+
+    known = df[df["price"].notna()]
+    train, val, test = split_by_time(known)
     for name, part in [("train", train), ("val", val), ("test", test)]:
         print(
             f"{name:6} {len(part):>7,} rows  "
             f"{part['timestamp'].min()} -> {part['timestamp'].max()}"
         )
         part.to_parquet(OUT_PATH.parent / f"{name}.parquet", index=False)
+
     return 0
 
 

@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 import pandas as pd
-from train import DATA_DIR, TARGET, prepare, score, train_model
+from src.train import DATA_DIR, TARGET, prepare, score, train_model
 
 ZONES = ["SE1", "SE2", "SE3", "SE4"]
 RESULTS_PATH = Path("results/test_results.csv")

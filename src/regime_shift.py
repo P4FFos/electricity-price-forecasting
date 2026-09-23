@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from train import DATA_DIR, TARGET, prepare, score, train_model
+from src.train import DATA_DIR, TARGET, prepare, score, train_model
 
 SWITCH = pd.Timestamp("2025-10-01", tz="Europe/Stockholm")
 

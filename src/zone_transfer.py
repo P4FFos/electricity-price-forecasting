@@ -1,6 +1,6 @@
 import sys
 import pandas as pd
-from train import DATA_DIR, FEATURES, TARGET, score, train_model
+from src.train import DATA_DIR, FEATURES, TARGET, score, train_model
 from pathlib import Path 
 
 TRANSFER_FEATURES = [f for f in FEATURES if f != "zone"]

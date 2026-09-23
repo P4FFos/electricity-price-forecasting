@@ -1,7 +1,7 @@
 import lightgbm as lgb
 import pandas as pd
 
-from train import CATEGORICAL, DATA_DIR, SEED, prepare, score
+from src.train import CATEGORICAL, DATA_DIR, SEED, prepare, score
 
 GRID = [
     {"learning_rate": 0.05, "num_leaves": 31},
