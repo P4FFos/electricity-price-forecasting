@@ -23,6 +23,9 @@ MODEL_DIR = "models"
 DATA_PATH = "data/processed/dataset.parquet"
 API_URL = os.getenv("API_URL", "http://api:8000")
 
+HORIZON_CORRECTION = 0.0118  # results/horizon_calibration.csv
+LAG_HORIZON_DAYS = 2
+
 STEPS = [
     [sys.executable, "-m", "src.fetch_prices", "--recent", "14"],
     [sys.executable, "-m", "src.load_prices"],
@@ -63,6 +66,8 @@ def forecast_future():
     future["pred_low"] = low.predict(X)
     future["pred_high"] = high.predict(X)
 
+    future = apply_horizon_correction(future)
+
     issued = datetime.now(timezone.utc)
     rows = [
         {
@@ -87,6 +92,13 @@ def forecast_future():
         session.commit()
 
     return len(rows)
+
+
+def apply_horizon_correction(future):
+    beyond = future["price_lag_2d"].isna()
+    future.loc[beyond, "pred_low"] -= HORIZON_CORRECTION
+    future.loc[beyond, "pred_high"] += HORIZON_CORRECTION
+    return future
 
 
 def fill_actuals():
