@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: elpris
+      POSTGRES_PASSWORD: elpris
+      POSTGRES_DB: elpris
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgresql://elpris:elpris@db:5432/elpris
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8000:8000"
+
+  job:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgresql://elpris:elpris@db:5432/elpris
+    volumes:
+      - ./data:/app/data
+    command: >
+      sh -c "while true; do
+        python -m src.daily_job || echo 'job failed';
+        sleep 86400;
+      done"
+
+volumes:
+  pgdata:
