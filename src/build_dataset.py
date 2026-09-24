@@ -21,6 +21,9 @@ VAL_FRAC = 0.85
 
 FORECAST_DAYS = 7
 
+TRAIN_END = pd.Timestamp("2025-07-18 12:00", tz="Europe/Stockholm")
+VAL_END = pd.Timestamp("2026-02-15 16:00", tz="Europe/Stockholm")
+
 
 def load_hourly_prices():
     prices = pd.read_parquet(PRICES_PATH)
@@ -94,12 +97,9 @@ def report(df):
 
 
 def split_by_time(df):
-    cut1 = df["timestamp"].quantile(TRAIN_FRAC)
-    cut2 = df["timestamp"].quantile(VAL_FRAC)
-
-    train = df[df["timestamp"] <= cut1]
-    val = df[(df["timestamp"] > cut1) & (df["timestamp"] <= cut2)]
-    test = df[df["timestamp"] > cut2]
+    train = df[df["timestamp"] <= TRAIN_END]
+    val = df[(df["timestamp"] > TRAIN_END) & (df["timestamp"] <= VAL_END)]
+    test = df[df["timestamp"] > VAL_END]
 
     return train, val, test
 
