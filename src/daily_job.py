@@ -9,6 +9,8 @@ from sqlalchemy.dialects.postgresql import insert
 
 from src.db import Prediction, Session, init_db
 from src.train import CATEGORICAL, FEATURES
+import os
+import requests
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,6 +21,7 @@ log = logging.getLogger("daily_job")
 
 MODEL_DIR = "models"
 DATA_PATH = "data/processed/dataset.parquet"
+API_URL = os.getenv("API_URL", "http://api:8000")
 
 STEPS = [
     [sys.executable, "-m", "src.fetch_prices", "--recent", "14"],
@@ -109,6 +112,14 @@ def fill_actuals():
     return filled
 
 
+def reload_api():
+    try:
+        r = requests.post(f"{API_URL}/admin/reload", timeout=30)
+        log.info("api reload: %s", r.json())
+    except requests.RequestException as exc:
+        log.warning("api reload failed: %s", exc)
+
+
 def main():
     init_db()
 
@@ -119,6 +130,8 @@ def main():
 
     f = fill_actuals()
     log.info("filled %d actuals", f)
+
+    reload_api()
 
     return 0
 

@@ -14,6 +14,7 @@ Data provided by SMHI (https://www.smhi.se).
 
 import sys
 from pathlib import Path
+import time
 
 import requests
 
@@ -37,6 +38,9 @@ PARAMETERS = {
 }
 
 RAW_DIR = Path("data/raw/weather")
+
+STATIC_PERIODS = {"corrected-archive"}
+MAX_AGE_HOURS = 12
 
 
 def fetch_one(zone, station, name, param, period):
@@ -66,9 +70,24 @@ def fetch_one(zone, station, name, param, period):
         print(f"{label}  unexpected file format")
         return
 
+    if path.exists() and period in STATIC_PERIODS:
+        print(f"{label}  skipped (static)")
+        return
+
+    if is_fresh(path):
+        print(f"{label}  skipped (fresh)")
+        return
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     print(f"{label}  ok  ({len(text):,} bytes)")
+
+
+def is_fresh(path):
+    if not path.exists():
+        return False
+    age_hours = (time.time() - path.stat().st_mtime) / 3600
+    return age_hours < MAX_AGE_HOURS
 
 
 def main():

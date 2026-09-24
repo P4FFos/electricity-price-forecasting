@@ -182,3 +182,11 @@ def metrics(zone: str = None, days: int = 30):
         "mae": sum(errors) / len(errors),
         "coverage": sum(inside) / len(inside),
     }
+
+
+@app.post("/admin/reload")
+def reload_dataset():
+    """Re-read the dataset after the daily job rewrites it."""
+    global dataset
+    dataset = pd.read_parquet(DATA_PATH)
+    return {"rows": len(dataset), "last": dataset["timestamp"].max().isoformat()}
