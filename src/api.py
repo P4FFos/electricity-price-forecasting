@@ -4,14 +4,19 @@ from pathlib import Path
 
 import lightgbm as lgb
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.dialects.postgresql import insert
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.db import Prediction, Session, init_db
 from src.train import CATEGORICAL, FEATURES
 
 MODEL_DIR = Path("models")
 DATA_PATH = Path("data/processed/dataset.parquet")
+FRONTEND_DIR = Path("frontend/dist")
 ZONES = ["SE1", "SE2", "SE3", "SE4"]
 
 models = {}
@@ -190,3 +195,25 @@ def reload_dataset():
     global dataset
     dataset = pd.read_parquet(DATA_PATH)
     return {"rows": len(dataset), "last": dataset["timestamp"].max().isoformat()}
+
+
+# The built dashboard (npm --prefix frontend run build). Without a build the API
+# runs exactly as before.
+if (FRONTEND_DIR / "index.html").exists():
+    app.mount(
+        "/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets"
+    )
+
+    @app.get("/", include_in_schema=False)
+    def frontend_index():
+        return FileResponse(FRONTEND_DIR / "index.html")
+
+    @app.exception_handler(StarletteHTTPException)
+    async def frontend_fallback(request: Request, exc: StarletteHTTPException):
+        # Fall back to the dashboard only when no route matched at all. A 404
+        # raised inside an API route, or a 405 for the wrong method on one,
+        # keeps its normal JSON response.
+        unmatched = "endpoint" not in request.scope
+        if exc.status_code == 404 and unmatched and request.method in ("GET", "HEAD"):
+            return FileResponse(FRONTEND_DIR / "index.html")
+        return await http_exception_handler(request, exc)
