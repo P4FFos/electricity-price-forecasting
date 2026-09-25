@@ -1,7 +1,7 @@
 import logging
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import lightgbm as lgb
 import pandas as pd
@@ -25,6 +25,10 @@ API_URL = os.getenv("API_URL", "http://api:8000")
 
 HORIZON_CORRECTION = 0.0118  # results/horizon_calibration.csv
 LAG_HORIZON_DAYS = 2
+
+DRIFT_MAE_THRESHOLD = 0.035  # test-set MAE was 0.0262
+DRIFT_COVERAGE_FLOOR = 0.70  # intervals claim 80%
+DRIFT_WINDOW_DAYS = 14
 
 STEPS = [
     [sys.executable, "-m", "src.fetch_prices", "--recent", "14"],
@@ -132,6 +136,37 @@ def reload_api():
         log.warning("api reload failed: %s", exc)
 
 
+def check_drift():
+    cutoff = datetime.now(timezone.utc) - timedelta(days=DRIFT_WINDOW_DAYS)
+
+    with Session() as session:
+        rows = (
+            session.query(Prediction)
+            .filter(Prediction.actual.isnot(None), Prediction.target_time >= cutoff)
+            .all()
+        )
+
+    if len(rows) < 100:
+        log.info("drift check skipped: only %d scored predictions", len(rows))
+        return
+
+    mae = sum(abs(r.pred_median - r.actual) for r in rows) / len(rows)
+    coverage = sum(r.pred_low <= r.actual <= r.pred_high for r in rows) / len(rows)
+
+    log.info(
+        "drift check: n=%d mae=%.4f coverage=%.1f%%", len(rows), mae, coverage * 100
+    )
+
+    if mae > DRIFT_MAE_THRESHOLD:
+        log.warning("DRIFT: MAE %.4f above threshold %.4f", mae, DRIFT_MAE_THRESHOLD)
+    if coverage < DRIFT_COVERAGE_FLOOR:
+        log.warning(
+            "DRIFT: coverage %.1f%% below floor %.1f%%",
+            coverage * 100,
+            DRIFT_COVERAGE_FLOOR * 100,
+        )
+
+
 def main():
     init_db()
 
@@ -144,6 +179,7 @@ def main():
     log.info("filled %d actuals", f)
 
     reload_api()
+    check_drift()
 
     return 0
 
