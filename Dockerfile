@@ -24,4 +24,4 @@ COPY src/ src/
 COPY models/ models/
 COPY --from=frontend /frontend/dist frontend/dist
 
-CMD ["uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "src.serving.api:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,13 +1,17 @@
+"""Score the model on the test set against seasonal naive.
+Run it only once, after all model choices are made."""
+
 import sys
 from pathlib import Path
 import pandas as pd
-from src.train import DATA_DIR, TARGET, prepare, score, train_model
+from src.modelling.train import DATA_DIR, TARGET, prepare, score, train_model
 
 ZONES = ["SE1", "SE2", "SE3", "SE4"]
 RESULTS_PATH = Path("results/test_results.csv")
 
 
 def main():
+    """Train like train.py and score on test, in total and per zone."""
     train = pd.read_parquet(DATA_DIR / "train.parquet")
     val = pd.read_parquet(DATA_DIR / "val.parquet")
     test = pd.read_parquet(DATA_DIR / "test.parquet")

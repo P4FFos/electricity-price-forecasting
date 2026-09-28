@@ -1,7 +1,10 @@
+"""Small grid search over learning rate and num_leaves.
+Prints val MAE and tree count for each setting."""
+
 import lightgbm as lgb
 import pandas as pd
 
-from src.train import CATEGORICAL, DATA_DIR, SEED, prepare, score
+from src.modelling.train import CATEGORICAL, DATA_DIR, SEED, prepare, score
 
 GRID = [
     {"learning_rate": 0.05, "num_leaves": 31},
@@ -13,6 +16,7 @@ GRID = [
 
 
 def main():
+    """Train and score each setting on val."""
     train = pd.read_parquet(DATA_DIR / "train.parquet")
     val = pd.read_parquet(DATA_DIR / "val.parquet")
     X_train, y_train = prepare(train)
@@ -27,6 +31,8 @@ def main():
             **settings,
         }
 
+        # Not train_model, since it fixes these params.
+        # More rounds, because low learning rates need more trees.
         model = lgb.train(
             params,
             lgb.Dataset(X_train, y_train, categorical_feature=CATEGORICAL),

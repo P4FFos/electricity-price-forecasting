@@ -1,9 +1,5 @@
-"""
-Consolidate raw elprisetjustnu.se JSON into one tidy parquet table.
-
-Input:  data/raw/prices/{ZONE}/{YYYY-MM-DD}.json
-Output: data/processed/prices.parquet
-"""
+"""Combine the raw price JSON files into data/processed/prices.parquet.
+Keeps the source resolution; build_dataset.py turns it into hourly."""
 
 import json
 from pathlib import Path
@@ -16,7 +12,7 @@ INTERVALS_COL = "intervals_in_day"
 
 
 def load_all():
-    """Read every raw JSON file into a single DataFrame"""
+    """Read all raw JSON files into one DataFrame."""
     records = []
 
     for zone_dir in sorted(RAW_DIR.iterdir()):
@@ -36,7 +32,7 @@ def load_all():
 
 
 def clean(df):
-    """Rename columns, parse timestamps, tag pricing regime."""
+    """Rename columns, parse times and mark hourly or 15-minute days."""
     df = df.rename(
         columns={
             "SEK_per_kWh": "sek_per_kwh",
@@ -46,18 +42,20 @@ def clean(df):
         errors="raise",
     )
 
+    # The offset changes with summer time, so parse as UTC first.
     for col in ("time_start", "time_end"):
         df[col] = pd.to_datetime(df[col], utc=True).dt.tz_convert("Europe/Stockholm")
 
+    # Hourly days have 23-25 prices, 15-minute days have 92-100.
     df["resolution"] = df[INTERVALS_COL].map(
-        lambda n: "quarter" if n > 48 else "hourly" 
+        lambda n: "quarter" if n > 48 else "hourly"
     )
     df = df.drop(columns=[INTERVALS_COL])
     return df.sort_values(["zone", "time_start"]).reset_index(drop=True)
 
 
 def report(df):
-    """Print the coverage report."""
+    """Print a short summary of the data."""
 
     print(f"\nRows: {len(df):,}")
     print(f"Range: {df['time_start'].min()} to {df['time_start'].max()}")
@@ -82,6 +80,7 @@ def report(df):
 
 
 def main():
+    """Load, clean and save prices.parquet."""
     df = load_all()
     df = clean(df)
     report(df)

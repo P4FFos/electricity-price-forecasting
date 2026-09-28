@@ -1,35 +1,30 @@
+"""FastAPI service for forecast history and accuracy.
+Also serves the React dashboard if frontend/dist exists."""
+
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import lightgbm as lgb
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy.dialects.postgresql import insert
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from src.db import Prediction, Session, init_db
-from src.train import CATEGORICAL, FEATURES
+from src.serving.db import Prediction, Session, init_db
 
-MODEL_DIR = Path("models")
 DATA_PATH = Path("data/processed/dataset.parquet")
 FRONTEND_DIR = Path("frontend/dist")
 ZONES = ["SE1", "SE2", "SE3", "SE4"]
 
-models = {}
 dataset = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Load the dataset and create the table at startup."""
     global dataset
-
-    models["median"] = lgb.Booster(model_file=str(MODEL_DIR / "lgbm.txt"))
-    models["low"] = lgb.Booster(model_file=str(MODEL_DIR / "lgbm_q10.txt"))
-    models["high"] = lgb.Booster(model_file=str(MODEL_DIR / "lgbm_q90.txt"))
 
     dataset = pd.read_parquet(DATA_PATH)
     init_db()
@@ -40,48 +35,22 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Swedish electricity price forecast", lifespan=lifespan)
 
 
-def features_for(zone, timestamp):
-    row = dataset[(dataset["zone"] == zone) & (dataset["timestamp"] == timestamp)]
-    if row.empty:
-        raise HTTPException(404, f"no data for {zone} at {timestamp}")
-
-    X = row[FEATURES].copy()
-    for col in CATEGORICAL:
-        X[col] = X[col].astype("category")
-    return X
-
-
-def log_prediction(zone, target_time, low, median, high):
-    stmt = (
-        insert(Prediction)
-        .values(
-            zone=zone,
-            target_time=target_time,
-            issued_at=datetime.now(timezone.utc),
-            pred_low=low,
-            pred_median=median,
-            pred_high=high,
-        )
-        .on_conflict_do_nothing(constraint="uq_prediction")
-    )
-
-    with Session() as session:
-        session.execute(stmt)
-        session.commit()
-
-
 def fill_actuals():
+    """Add the real price to forecasts whose hour has passed.
+    Same as daily_job.fill_actuals, but uses the dataset in memory."""
+    known = dataset[dataset["price"].notna()].set_index(["zone", "timestamp"])["price"]
+
     with Session() as session:
         pending = session.query(Prediction).filter(Prediction.actual.is_(None)).all()
 
         filled = 0
         for row in pending:
-            target = pd.Timestamp(row.target_time).tz_convert("Europe/Stockholm")
-            match = dataset[
-                (dataset["zone"] == row.zone) & (dataset["timestamp"] == target)
-            ]
-            if not match.empty:
-                row.actual = float(match["price"].iloc[0])
+            key = (
+                row.zone,
+                pd.Timestamp(row.target_time).tz_convert("Europe/Stockholm"),
+            )
+            if key in known.index:
+                row.actual = float(known.loc[key])
                 filled += 1
 
         session.commit()
@@ -91,39 +60,19 @@ def fill_actuals():
 
 @app.get("/health")
 def health():
+    """Health check with the number of rows loaded."""
     return {"status": "ok", "rows": len(dataset)}
-
-
-@app.get("/predict")
-def predict(zone: str, timestamp: datetime):
-    if zone not in ZONES:
-        raise HTTPException(400, f"zone must be one of {ZONES}")
-
-    ts = pd.Timestamp(timestamp).tz_convert("Europe/Stockholm")
-    X = features_for(zone, ts)
-
-    low = float(models["low"].predict(X)[0])
-    median = float(models["median"].predict(X)[0])
-    high = float(models["high"].predict(X)[0])
-
-    log_prediction(zone, ts, low, median, high)
-
-    return {
-        "zone": zone,
-        "timestamp": ts.isoformat(),
-        "low": low,
-        "median": median,
-        "high": high,
-    }
 
 
 @app.post("/admin/fill-actuals")
 def admin_fill_actuals():
+    """Run fill_actuals on demand."""
     return {"filled": fill_actuals()}
 
 
 @app.get("/history")
 def history(zone: str, days: int = 14):
+    """Latest forecast per hour for the last `days` days, with real prices."""
     if zone not in ZONES:
         raise HTTPException(400, f"zone must be one of {ZONES}")
 
@@ -137,6 +86,8 @@ def history(zone: str, days: int = 14):
             .all()
         )
 
+    # An hour can have one forecast per daily run. Rows are sorted newest
+    # first, so keeping the first row keeps the latest forecast.
     seen = set()
     points = []
     for r in rows:
@@ -158,6 +109,7 @@ def history(zone: str, days: int = 14):
 
 @app.get("/metrics")
 def metrics(zone: str = None, days: int = 30):
+    """MAE and interval coverage over the last `days` days."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     with Session() as session:
@@ -191,28 +143,25 @@ def metrics(zone: str = None, days: int = 30):
 
 @app.post("/admin/reload")
 def reload_dataset():
-    """Re-read the dataset after the daily job rewrites it."""
+    """Load the dataset again after the daily job updates it."""
     global dataset
     dataset = pd.read_parquet(DATA_PATH)
     return {"rows": len(dataset), "last": dataset["timestamp"].max().isoformat()}
 
 
-# The built dashboard (npm --prefix frontend run build). Without a build the API
-# runs exactly as before.
+# Serve the dashboard if it was built (npm --prefix frontend run build).
 if (FRONTEND_DIR / "index.html").exists():
-    app.mount(
-        "/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets"
-    )
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
 
     @app.get("/", include_in_schema=False)
     def frontend_index():
+        """Serve the dashboard."""
         return FileResponse(FRONTEND_DIR / "index.html")
 
     @app.exception_handler(StarletteHTTPException)
     async def frontend_fallback(request: Request, exc: StarletteHTTPException):
-        # Fall back to the dashboard only when no route matched at all. A 404
-        # raised inside an API route, or a 405 for the wrong method on one,
-        # keeps its normal JSON response.
+        """Serve the dashboard for unknown GET paths.
+        Errors from real API routes keep their normal JSON response."""
         unmatched = "endpoint" not in request.scope
         if exc.status_code == 404 and unmatched and request.method in ("GET", "HEAD"):
             return FileResponse(FRONTEND_DIR / "index.html")

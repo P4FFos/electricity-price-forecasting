@@ -1,3 +1,6 @@
+"""Postgres table and session for saved forecasts.
+Uses DATABASE_URL, or the local docker-compose database by default."""
+
 import os
 from datetime import datetime, timezone
 
@@ -20,6 +23,8 @@ Base = declarative_base()
 
 
 class Prediction(Base):
+    """One forecast for one zone and hour, and the real price once known."""
+
     __tablename__ = "predictions"
 
     id = Column(Integer, primary_key=True)
@@ -38,6 +43,8 @@ class Prediction(Base):
 
     actual = Column(Float, nullable=True)
 
+    # issued_at is in the key, so each daily run adds new rows
+    # instead of replacing old ones.
     __table_args__ = (
         UniqueConstraint("zone", "target_time", "issued_at", name="uq_prediction"),
     )
@@ -48,4 +55,5 @@ Session = sessionmaker(bind=engine)
 
 
 def init_db():
+    """Create the predictions table if it doesn't exist."""
     Base.metadata.create_all(engine)

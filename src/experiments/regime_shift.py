@@ -1,9 +1,12 @@
+"""Did the 2025-10-01 switch to 15-minute prices hurt the model?
+A placebo run one year earlier shows the normal change without a switch."""
+
 import sys
 from pathlib import Path
 
 import pandas as pd
 
-from src.train import DATA_DIR, TARGET, prepare, score, train_model
+from src.modelling.train import DATA_DIR, TARGET, prepare, score, train_model
 
 SWITCH = pd.Timestamp("2025-10-01", tz="Europe/Stockholm")
 
@@ -13,7 +16,7 @@ def run(df, train_end, period_a, period_b, label):
     train = df[df["timestamp"] <= train_end]
     X_train, y_train = prepare(train)
 
-    # A small slice right after training, used only for early stopping.
+    # Short period after training, only for early stopping.
     stop = df[(df["timestamp"] > train_end) & (df["timestamp"] <= period_a[0])]
     X_stop, y_stop = prepare(stop)
 
@@ -36,9 +39,10 @@ def run(df, train_end, period_a, period_b, label):
 
 
 def main():
+    """Run the real experiment and the placebo."""
     df = pd.read_parquet(DATA_DIR / "dataset.parquet")
 
-    # Real: training ends before the switch, period B is after it.
+    # Real: train before the switch, period B is after it.
     run(
         df,
         train_end=pd.Timestamp("2025-06-30", tz="Europe/Stockholm"),
@@ -50,7 +54,7 @@ def main():
         label="REAL: period B is post-switch",
     )
 
-    # Placebo: same shape, one year earlier. Both periods pre-switch.
+    # Placebo: same setup one year earlier, both periods before the switch.
     run(
         df,
         train_end=pd.Timestamp("2024-06-30", tz="Europe/Stockholm"),

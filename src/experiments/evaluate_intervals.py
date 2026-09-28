@@ -1,6 +1,5 @@
-"""
-Check whether the 80% prediction intervals are honest, and calibrate them
-"""
+"""Check if the 80% intervals really cover 80%, and try to fix them.
+Reads val_predictions.parquet from train.py and prints the results."""
 
 import sys
 from pathlib import Path
@@ -12,11 +11,14 @@ PREDICTIONS_PATH = Path("data/processed/val_predictions.parquet")
 ZONES = ["SE1", "SE2", "SE3", "SE4"]
 TARGET = "price"
 
+# Prices from the last 2 days are not known at forecast time,
+# so the rolling correction can't use them.
 HORIZON_DAYS = 2
 WINDOW_DAYS = 28
 
 
 def evaluate_intervals(df, low, high, title):
+    """Print coverage and mean width, in total and per zone."""
     inside = (df[TARGET] >= low) & (df[TARGET] <= high)
     width = high - low
 
@@ -35,11 +37,14 @@ def evaluate_intervals(df, low, high, title):
 
 
 def conformal_correction(y, low, high, target=0.8):
+    """How much to widen each side so `target` of y is inside."""
     scores = np.maximum(low - y, y - high)
     return np.quantile(scores, target)
 
 
 def rolling_correction(timestamps, y, low, high, target=0.8):
+    """Daily correction from the past WINDOW_DAYS,
+    leaving out the last HORIZON_DAYS."""
     scores = np.maximum(low - y, y - high)
     days = timestamps.dt.floor("D")
     q = np.full(len(y), np.nan)
@@ -54,6 +59,7 @@ def rolling_correction(timestamps, y, low, high, target=0.8):
 
 
 def main():
+    """Run the four interval checks on val predictions."""
     df = pd.read_parquet(PREDICTIONS_PATH)
     y = df[TARGET].values
     low = df["pred_low"].values

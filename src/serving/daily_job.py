@@ -1,3 +1,6 @@
+"""Daily job: update data, forecast the next 7 days, add real prices, check drift.
+Runs in the "job" container. It never retrains the models."""
+
 import logging
 import subprocess
 import sys
@@ -7,8 +10,8 @@ import lightgbm as lgb
 import pandas as pd
 from sqlalchemy.dialects.postgresql import insert
 
-from src.db import Prediction, Session, init_db
-from src.train import CATEGORICAL, FEATURES
+from src.serving.db import Prediction, Session, init_db
+from src.modelling.train import CATEGORICAL, FEATURES
 import os
 import requests
 
@@ -30,17 +33,19 @@ DRIFT_MAE_THRESHOLD = 0.035  # test-set MAE was 0.0262
 DRIFT_COVERAGE_FLOOR = 0.70  # intervals claim 80%
 DRIFT_WINDOW_DAYS = 14
 
+# Fetch and load are split, so loading can re-run without downloading again.
+# Fetch 14 days back, so a missed run catches up.
 STEPS = [
-    [sys.executable, "-m", "src.fetch_prices", "--recent", "14"],
-    [sys.executable, "-m", "src.load_prices"],
-    [sys.executable, "-m", "src.fetch_weather"],
-    [sys.executable, "-m", "src.load_weather"],
-    [sys.executable, "-m", "src.build_dataset"],
+    [sys.executable, "-m", "src.data.fetch_prices", "--recent", "14"],
+    [sys.executable, "-m", "src.data.load_prices"],
+    [sys.executable, "-m", "src.data.fetch_weather"],
+    [sys.executable, "-m", "src.data.load_weather"],
+    [sys.executable, "-m", "src.data.build_dataset"],
 ]
 
 
 def refresh_data():
-    """Fetch the latest prices and weather, then rebuild the dataset."""
+    """Download new prices and weather, then rebuild the dataset."""
     for step in STEPS:
         log.info("running %s", " ".join(step))
         result = subprocess.run(step, capture_output=True, text=True)
@@ -50,7 +55,7 @@ def refresh_data():
 
 
 def forecast_future():
-    """Predict every future row and store the forecasts."""
+    """Forecast every future row and save it to the database."""
     dataset = pd.read_parquet(DATA_PATH)
     future = dataset[dataset["price"].isna()].copy()
 
@@ -99,6 +104,9 @@ def forecast_future():
 
 
 def apply_horizon_correction(future):
+    """Widen the interval for rows more than 2 days after the last known price."""
+    # These rows have no price_lag_2d, which drops coverage to ~59%.
+    # See horizon_calibration.py.
     beyond = future["price_lag_2d"].isna()
     future.loc[beyond, "pred_low"] -= HORIZON_CORRECTION
     future.loc[beyond, "pred_high"] += HORIZON_CORRECTION
@@ -106,7 +114,7 @@ def apply_horizon_correction(future):
 
 
 def fill_actuals():
-    """Fill in the real price for forecasts whose hour has passed."""
+    """Add the real price to forecasts whose hour has passed."""
     dataset = pd.read_parquet(DATA_PATH)
     known = dataset[dataset["price"].notna()].set_index(["zone", "timestamp"])["price"]
 
@@ -129,6 +137,7 @@ def fill_actuals():
 
 
 def reload_api():
+    """Tell the API to load the new dataset. Failures are only logged."""
     try:
         r = requests.post(f"{API_URL}/admin/reload", timeout=30)
         log.info("api reload: %s", r.json())
@@ -137,6 +146,7 @@ def reload_api():
 
 
 def check_drift():
+    """Warn if recent MAE or coverage is worse than its limit."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=DRIFT_WINDOW_DAYS)
 
     with Session() as session:
@@ -168,6 +178,7 @@ def check_drift():
 
 
 def main():
+    """Run all steps of the daily job."""
     init_db()
 
     refresh_data()

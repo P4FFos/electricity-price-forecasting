@@ -1,7 +1,5 @@
-"""
-Train a LightGBM model for the 2-7 day ahead forecast.
-Compared against the baselines in results/baselines.csv.
-"""
+"""Train LightGBM models for the 2-7 day forecast and save them to models/.
+daily_job.py uses FEATURES, so keep it the same as the saved models."""
 
 import sys
 from pathlib import Path
@@ -35,6 +33,7 @@ TARGET = "price"
 
 
 def prepare(df):
+    """Return features and target, with zone as a category."""
     X = df[FEATURES].copy()
 
     for col in CATEGORICAL:
@@ -44,6 +43,8 @@ def prepare(df):
 
 
 def score(actual, predicted):
+    """Return MAE and RMSE.
+    No MAPE, because prices can be zero or negative."""
     return {
         "mae": float(np.abs(actual - predicted).mean()),
         "rmse": float(np.sqrt(((actual - predicted) ** 2).mean())),
@@ -59,6 +60,8 @@ def train_model(
     alpha=None,
     categorical=CATEGORICAL,
 ):
+    """Train LightGBM with early stopping on val.
+    For a quantile model, pass objective="quantile" and alpha."""
     params = {
         "objective": objective,
         "metric": "mae" if objective == "regression" else "quantile",
@@ -83,6 +86,7 @@ def train_model(
 
 
 def report(model, val, pred):
+    """Print val scores against the baseline, and feature importance."""
     overall = score(val[TARGET], pred)
     improvement = (BASELINE_MAE - overall["mae"]) / BASELINE_MAE
 
@@ -106,6 +110,7 @@ def report(model, val, pred):
 
 
 def main():
+    """Train and save the main and quantile models, and val predictions."""
     train = pd.read_parquet(DATA_DIR / "train.parquet")
     val = pd.read_parquet(DATA_DIR / "val.parquet")
 

@@ -1,14 +1,5 @@
-"""
-Fetch daily electricity price JSON from elprisetjustnu.se.
-
-API: GET https://www.elprisetjustnu.se/api/v1/prices/{YYYY}/{MM}-{DD}_{ZONE}.json
-History available from 2022-11-01. Prices exclude VAT, surcharges and taxes.
-Data provided by Elpriset just nu.se (https://www.elprisetjustnu.se).
-
-Usage:
-    python fetch_prices.py                                   # full backfill, all zones
-    python fetch_prices.py --start 2026-09-01 --zones SE3    # smoke test
-"""
+"""Download daily electricity prices from elprisetjustnu.se (data from 2022-11-01).
+Prices have no VAT or taxes. Data provided by Elpriset just nu.se."""
 
 import argparse
 import json
@@ -37,7 +28,7 @@ log = logging.getLogger("fetch_prices")
 
 
 def build_session():
-    """Session that retries transient failures and reuses the TCP connection."""
+    """HTTP session that retries failed requests."""
     session = requests.Session()
     retry = Retry(
         total=4,
@@ -54,7 +45,7 @@ def build_session():
 
 
 def daterange(start, end):
-    """Yield each date from start to end, inclusive."""
+    """Yield each day from start to end, both included."""
     current = start
     while current <= end:
         yield current
@@ -62,12 +53,13 @@ def daterange(start, end):
 
 
 def target_path(day, zone):
-    """Where this day's JSON lives on disk."""
+    """File path for one day and zone."""
     return RAW_DIR / zone / f"{day.isoformat()}.json"
 
 
 def fetch_one(session, day, zone, delay):
-    """Fetch one day for one zone. Returns 'ok', 'skipped', 'missing' or 'error'."""
+    """Download one day for one zone.
+    Returns 'ok', 'skipped', 'missing' or 'error'."""
     path = target_path(day, zone)
 
     if path.exists():
@@ -81,8 +73,9 @@ def fetch_one(session, day, zone, delay):
         log.warning("%s %s  request failed: %s", zone, day, exc)
         return "error"
 
-    time.sleep(delay)  # be polite: free public API
+    time.sleep(delay)  # free API, don't spam it
 
+    # 404 means not published yet. Nothing is saved, so the next run tries again.
     if response.status_code == 404:
         return "missing"
     if response.status_code != 200:
@@ -95,6 +88,7 @@ def fetch_one(session, day, zone, delay):
         log.warning("%s %s  response was not valid JSON", zone, day)
         return "error"
 
+    # Saved files are never downloaded again, so don't save bad data.
     if not isinstance(payload, list) or not payload:
         log.warning("%s %s  unexpected payload shape", zone, day)
         return "error"
@@ -105,6 +99,7 @@ def fetch_one(session, day, zone, delay):
 
 
 def main():
+    """Download every missing day and zone in the range."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--start", default=EARLIEST.isoformat(), help="YYYY-MM-DD")
     parser.add_argument(
@@ -120,7 +115,7 @@ def main():
     start = date.fromisoformat(args.start)
     end = date.fromisoformat(args.end)
 
-    # Validate the user's input first, then clamp, then check what survives.
+    # Check the dates, then move start up to EARLIEST if needed.
     if end < start:
         log.error("End date is before start date.")
         return 1

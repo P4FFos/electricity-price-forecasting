@@ -1,16 +1,21 @@
+"""Can a model trained on some zones forecast other zones?
+Trains without the zone feature and writes results/zone_transfer.csv."""
+
 import sys
 import pandas as pd
-from src.train import DATA_DIR, FEATURES, TARGET, score, train_model
-from pathlib import Path 
+from src.modelling.train import DATA_DIR, FEATURES, TARGET, score, train_model
+from pathlib import Path
 
 TRANSFER_FEATURES = [f for f in FEATURES if f != "zone"]
 
 
 def run(train, val, source, target):
+    """Train on source zones, return val MAE on target zones."""
     tr = train[train["zone"].isin(source)]
     va_src = val[val["zone"].isin(source)]
     va_tgt = val[val["zone"].isin(target)]
 
+    # Early stopping on source zones only, so target data is not used.
     model = train_model(
         tr[TRANSFER_FEATURES],
         tr[TARGET],
@@ -20,6 +25,7 @@ def run(train, val, source, target):
     )
     pred = model.predict(va_tgt[TRANSFER_FEATURES], num_iteration=model.best_iteration)
     return score(va_tgt[TARGET], pred)["mae"]
+
 
 ZONES = ["SE1", "SE2", "SE3", "SE4"]
 
@@ -39,17 +45,20 @@ EXPERIMENTS = [
 
 
 def main():
+    """Run every experiment and write the results."""
     train = pd.read_parquet(DATA_DIR / "train.parquet")
     val = pd.read_parquet(DATA_DIR / "val.parquet")
 
     rows = []
     for source, target in EXPERIMENTS:
         mae = run(train, val, source, target)
-        rows.append({
-            "train_on": "+".join(source),
-            "test_on": "+".join(target),
-            "mae": mae,
-        })
+        rows.append(
+            {
+                "train_on": "+".join(source),
+                "test_on": "+".join(target),
+                "mae": mae,
+            }
+        )
         print(f"{rows[-1]['train_on']:>8} -> {rows[-1]['test_on']:<8} MAE {mae:.6f}")
 
     results = pd.DataFrame(rows)

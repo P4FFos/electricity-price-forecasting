@@ -1,16 +1,5 @@
-"""
-Fetch temperature and wind history from SMHI for one station per bidding zone.
-
-API: https://opendata-download-metobs.smhi.se/api/version/1.0
-     /parameter/{param}/station/{station}/period/{period}/data.csv
-
-Two periods are fetched per station and parameter:
-  corrected-archive  full quality-checked history, but excludes the last ~3 months
-  latest-months      the recent months the archive leaves out, not fully checked
-
-
-Data provided by SMHI (https://www.smhi.se).
-"""
+"""Download temperature and wind from SMHI, one station per zone.
+Writes data/raw/weather/. Data provided by SMHI (https://www.smhi.se)."""
 
 import sys
 from pathlib import Path
@@ -23,6 +12,8 @@ BASE_URL = (
     "/parameter/{param}/station/{station}/period/{period}/data.csv"
 )
 
+# corrected-archive: checked data, but misses the last ~3 months.
+# latest-months: those recent months, not fully checked.
 PERIODS = ["corrected-archive", "latest-months"]
 
 STATIONS = {
@@ -44,12 +35,18 @@ MAX_AGE_HOURS = 12
 
 
 def fetch_one(zone, station, name, param, period):
-    """Fetch one parameter for one station and period. Skips if already downloaded."""
+    """Download one parameter for one station and period.
+    The archive is downloaded once; latest-months again after MAX_AGE_HOURS."""
     path = RAW_DIR / f"{zone}_{name}_{period}.csv"
     label = f"{zone} {name} {period}"
 
-    if path.exists():
-        print(f"{label}  skipped")
+    # Check before the request, so skipped files are not downloaded.
+    if path.exists() and period in STATIC_PERIODS:
+        print(f"{label}  skipped (static)")
+        return
+
+    if is_fresh(path):
+        print(f"{label}  skipped (fresh)")
         return
 
     url = BASE_URL.format(param=param, station=station, period=period)
@@ -64,18 +61,11 @@ def fetch_one(zone, station, name, param, period):
         print(f"{label}  HTTP {response.status_code}")
         return
 
+    # utf-8-sig removes the BOM, so the header check below works.
     text = response.content.decode("utf-8-sig")
 
     if not text.startswith("Stationsnamn"):
         print(f"{label}  unexpected file format")
-        return
-
-    if path.exists() and period in STATIC_PERIODS:
-        print(f"{label}  skipped (static)")
-        return
-
-    if is_fresh(path):
-        print(f"{label}  skipped (fresh)")
         return
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,6 +74,7 @@ def fetch_one(zone, station, name, param, period):
 
 
 def is_fresh(path):
+    """True if the file exists and is newer than MAX_AGE_HOURS."""
     if not path.exists():
         return False
     age_hours = (time.time() - path.stat().st_mtime) / 3600
@@ -91,6 +82,7 @@ def is_fresh(path):
 
 
 def main():
+    """Download all parameters and periods for every zone."""
     for zone, station in STATIONS.items():
         for name, param in PARAMETERS.items():
             for period in PERIODS:

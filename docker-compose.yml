@@ -34,7 +34,7 @@ services:
       - ./data:/app/data
     command: >
       sh -c "while true; do
-        python -m src.daily_job || echo 'job failed';
+        python -m src.serving.daily_job || echo 'job failed';
         sleep 86400;
       done"
 

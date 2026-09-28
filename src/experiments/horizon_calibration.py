@@ -1,10 +1,13 @@
+"""Find how much to widen the 80% interval when price_lag_2d is missing.
+Copy the result by hand to HORIZON_CORRECTION in daily_job.py."""
+
 import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from src.train import (
+from src.modelling.train import (
     CATEGORICAL,
     DATA_DIR,
     FEATURES,
@@ -18,16 +21,19 @@ RESULTS_PATH = Path("results/horizon_calibration.csv")
 
 
 def blank_lag(X):
+    """Copy of X with price_lag_2d empty, like forecasts past 2 days."""
     X = X.copy()
     X["price_lag_2d"] = np.nan
     return X
 
 
 def coverage(y, low, high):
+    """Share of y inside [low, high]."""
     return float(((y >= low) & (y <= high)).mean())
 
 
 def main():
+    """Compare coverage with and without the lag, and find the correction."""
     train = pd.read_parquet(DATA_DIR / "train.parquet")
     val = pd.read_parquet(DATA_DIR / "val.parquet")
 
@@ -54,9 +60,10 @@ def main():
             f"width {np.mean(high - low):.4f}"
         )
 
-        low_nl = preds[("no_lag", 0.1)]
+    low_nl = preds[("no_lag", 0.1)]
     high_nl = preds[("no_lag", 0.9)]
 
+    # Fit and checked on the same rows, so "after" is always ~80%.
     scores = np.maximum(low_nl - y_val.values, y_val.values - high_nl)
     q = float(np.quantile(scores, 0.8))
 
